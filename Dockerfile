@@ -54,8 +54,7 @@ RUN set -x && \
     sed -i 's/#tcp_nopush/tcp_nopush/g' /etc/nginx/nginx.conf && \
     sed -i 's/#gzip  on;/gzip  on;/g' /etc/nginx/nginx.conf
 
-# 2) 【硬核注入】完美缩进的 http 核心块
-# 利用标准输入流引入，这里留几个空格，进入 nginx.conf 后就是几个空格！
+# 3) 【硬核注入】完美缩进的 http 核心块
 RUN sed -i '/http {/r /dev/stdin' /etc/nginx/nginx.conf << 'EOF'
     set_real_ip_from  0.0.0.0/0;
     real_ip_header     X-Forwarded-For;
@@ -82,10 +81,45 @@ RUN sed -i '/http {/r /dev/stdin' /etc/nginx/nginx.conf << 'EOF'
     access_log /var/log/nginx/access.log main_enhanced;
 EOF
 
-# 3) 安全注入默认站点的 403 区域拦截规则
+# 4) 生成精美的 403 HTML 阻断页面
+RUN mkdir -p /usr/share/nginx/html && \
+cat << 'EOF' > /usr/share/nginx/html/403_blocked.html
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>403 Forbidden - Access Denied</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .container { text-align: center; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); max-width: 500px; width: 90%; }
+        .icon { font-size: 64px; color: #e02424; margin-bottom: 20px; }
+        h1 { font-size: 24px; margin: 0 0 12px 0; color: #111827; }
+        p { font-size: 15px; color: #6b7280; line-height: 1.6; margin: 0 0 24px 0; }
+        .footer { font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">🚫</div>
+        <h1>Access Denied / 访问被拒绝</h1>
+        <p>抱歉，由于安全策略限制，系统检测到您的 IP 属地不属于服务开放区域，已被拒绝连接。<br>Your IP region is not allowed to access this service.</p>
+        <div class="footer">Security Powered by Cloud Gateway</div>
+    </div>
+</body>
+</html>
+EOF
+
+# 5) 精准注入虚拟主机默认站点的 HTML 重定向拦截规则，并安全配置 403 页面放行防死循环
 RUN sed -i '/location \/ {/a \
         if ($allowed_country = no) {\n\
-            return 403 "Access Denied: Your IP region is not allowed.\\n";\n\
-        }' /etc/nginx/conf.d/default.conf
+            rewrite ^(.*)$ /403_blocked.html break;\n\
+        }' /etc/nginx/conf.d/default.conf && \
+    sed -i '/location \/ {/i \
+    error_page 403 /403_blocked.html;\n\
+    location = /403_blocked.html {\n\
+        root /usr/share/nginx/html;\n\
+        allow all;\n\
+    }\n' /etc/nginx/conf.d/default.conf
 
 EXPOSE 80 443
